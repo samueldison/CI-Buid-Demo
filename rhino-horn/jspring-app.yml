@@ -1,0 +1,12 @@
+apiVersion: kro.run/v1alpha1
+kind: WebApplication
+metadata:
+  name: springboot-app
+  namespace: dev
+spec:
+  targetNamespace: dev
+
+  name: springboot-app
+  image: colanta06/spring-app:v1.0
+  containerPort: 8084
+  port: 8084
