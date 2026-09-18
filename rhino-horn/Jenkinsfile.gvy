@@ -54,19 +54,19 @@ pipeline {
     }
 
     stages {
-        stage('init') {
-            steps {
-                script {
-                    gv = load 'rhino-horn/script.groovy'
-                }
-            }
-        }
-
         stage('Pull Src Code') {
             steps {
                script {
                    gv.pullSourceCode()
                }
+            }
+        }
+
+        stage('init') {
+            steps {
+                script {
+                    gv = load 'rhino-horn/script.groovy'
+                }
             }
         }
 
