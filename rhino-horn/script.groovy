@@ -1,12 +1,22 @@
 def pullSourceCode() {
     echo "====++++Pulling Source Code From Repo++++===="
-    checkout([$class: 'GitSCM',
+
+    // Shared Git reference cache for this repo only.
+    def repoCache = '/var/lib/jenkins/git-cache/CI-Buid-Demo.git'
+
+    checkout([
+        $class: 'GitSCM',
         branches: [[name: "*/${params.BRANCH_NAME}"]],
         doGenerateSubmoduleConfigurations: false,
         extensions: [
             [$class: 'PruneStaleBranch'],
             [$class: 'CleanBeforeCheckout'],
-            [$class: 'CloneOption', depth: 1, noTags: false, reference: '', shallow: true]
+            [$class: 'CloneOption',
+                depth: 1,
+                noTags: false,
+                reference: repoCache,
+                shallow: true
+            ]
         ],
         userRemoteConfigs: [[credentialsId: env.GIT_CREDS, url: env.GIT_URL]]
     ])

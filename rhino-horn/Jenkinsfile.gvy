@@ -54,18 +54,23 @@ pipeline {
     }
 
     stages {
-        stage('Pull Src Code') {
-            steps {
-               script {
-                   gv.pullSourceCode()
-               }
-            }
-        }
-
         stage('init') {
             steps {
                 script {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${params.BRANCH_NAME}"]],
+                        userRemoteConfigs: [[url: env.GIT_URL, credentialsId: env.GIT_CREDS]]
+                    ])
                     gv = load 'rhino-horn/script.groovy'
+                }
+            }
+        }
+
+        stage('Pull Src Code') {
+            steps {
+                script {
+                    gv.pullSourceCode()
                 }
             }
         }
