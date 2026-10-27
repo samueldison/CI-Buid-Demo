@@ -50,7 +50,7 @@ pipeline {
     SONAR_PROJECT_KEY  = 'safari_rhino-horn'
     TRIVY_CACHE_DIR    = '/tmp/trivy'
     TRIVY_SCAN_STATUS  = '-1'
-    S3_BUCKET_NAME    = "trivy-reports-${params.ENVIRONMENT}" 
+    S3_BUCKET_NAME    = "scan-reports-8mjmlco7hkfgbqbk" 
 
 }
 
