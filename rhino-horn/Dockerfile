@@ -11,7 +11,7 @@ RUN java -Djarmode=layertools -jar app.jar extract
 FROM ${RUNTIME_IMAGE} AS runtime
 
 
-ARG APP_VERSION=latest
+# ARG APP_VERSION=latest
 
 LABEL org.opencontainers.image.title="DevSecOps-api" \
       org.opencontainers.image.description="Spring Boot API" \

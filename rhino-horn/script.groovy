@@ -82,11 +82,11 @@ def deployToNexus() {
 }
 
 
-def sonarqubeAnalysis() {
-    echo "==== SonarQube Code Quality Analysis ===="
+def sonarcloudAnalysis() {
+    echo "==== SonarCloud Code Quality Analysis ===="
 
     dir('rhino-horn') {
-        withSonarQubeEnv('SonarQube') {
+        withSonarQubeEnv('SonarCloud') {
 
             withMaven(
                 maven: 'maven-3.9.9',
@@ -122,13 +122,17 @@ def checkDockerfile() {
 
 def buildDockerImage() {
     echo "====++++Building Docker Image++++===="
+
+    def shortCommitSha = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
     sh """
         DOCKER_BUILDKIT=1 docker build \
             --no-cache \
             --pull \
+            --build-arg APP_VERSION="${shortCommitSha}" \
             -t ${env.IMAGE_NAME} \
+            -t ${env.DOCKER_NAMESPACE}/${env.JOB_NAME.replaceAll('/', '-').toLowerCase()}:${shortCommitSha} \
             -f ${env.DOCKERFILE} .
-    """
+        """
 }
 
 def trivyScan() {
@@ -200,7 +204,6 @@ def trivyScan() {
     return scanStatus
 }
 
-/*
 def uploadTrivyReportToS3() {
     echo "====++++ Uploading Trivy Report to S3 ++++===="
     def reportPath  = "trivy-reports/trivy-report.html"
@@ -221,7 +224,6 @@ def uploadTrivyReportToS3() {
         echo "Trivy report not found or empty; skipping S3 upload."
     }
 }
-*/
 
 def pushDockerImage() {
     echo "====++++ Pushing Docker Image to Registry ++++===="
@@ -284,7 +286,6 @@ def cleanup() {
     }
 }
 
-/*
 def getEmailForUsers(String userIdsCsv) {
     def emailMap = [
         'user1': 'samuelhaddison71@gmail.com',
@@ -299,6 +300,5 @@ def getEmailForUsers(String userIdsCsv) {
     }
     return emails.join(',')
 }
-*/
 
 return this

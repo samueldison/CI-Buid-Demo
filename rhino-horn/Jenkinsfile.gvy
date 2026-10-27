@@ -36,22 +36,24 @@ pipeline {
     }
 
     environment {
-        GIT_URL           = 'https://github.com/samueldison/CI-Buid-Demo.git'
-        GIT_CREDS         = 'gitcreds'
-        DOCKERFILE        = 'rhino-horn/Dockerfile'
-        DOCKER_NAMESPACE  = 'colanta06'
-        MAJOR_VERSION     = '1'
-        MINOR_VERSION     = '0'
-        PATCH_VERSION     = "${env.BUILD_NUMBER}"
-        IMAGE_TAG         = "v${MAJOR_VERSION}.${MINOR_VERSION}.${env.PATCH_VERSION}"
-        IMAGE_NAME        = "${DOCKER_NAMESPACE}/${env.JOB_NAME.replaceAll('/', '-').toLowerCase()}:${env.IMAGE_TAG}"
-        CONTAINER_NAME    = "rhino-horn-${params.ENVIRONMENT}"
-        SONAR_PROJECT_NAME = 'safari_rhino-horn'
-        SONAR_PROJECT_KEY = 'safari_rhino-horn'
-        TRIVY_CACHE_DIR   = '/tmp/trivy'
-        TRIVY_SCAN_STATUS = '-1'
-        S3_BUCKET_NAME    = "trivy-reports-${params.ENVIRONMENT}"
-    }
+    GIT_URL            = 'https://github.com/samueldison/CI-Buid-Demo.git'
+    GIT_CREDS          = 'gitcreds'
+    DOCKERFILE         = 'rhino-horn/Dockerfile'
+    DOCKER_NAMESPACE   = 'colanta06'
+    MAJOR_VERSION      = '1'
+    MINOR_VERSION      = '0'
+    PATCH_VERSION      = "${BUILD_NUMBER}" 
+    IMAGE_TAG          = "v${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
+    IMAGE_NAME         = "${DOCKER_NAMESPACE}/${JOB_NAME.replaceAll('/', '-').toLowerCase()}:${IMAGE_TAG.toLowerCase()}"
+    CONTAINER_NAME     = "rhino-horn-${params.ENVIRONMENT}"
+    SONAR_PROJECT_NAME = 'safari_rhino-horn'
+    SONAR_PROJECT_KEY  = 'safari_rhino-horn'
+    TRIVY_CACHE_DIR    = '/tmp/trivy'
+    TRIVY_SCAN_STATUS  = '-1'
+    S3_BUCKET_NAME    = "trivy-reports-${params.ENVIRONMENT}" 
+
+}
+
 
     stages {
         stage('init') {
@@ -99,10 +101,10 @@ pipeline {
             }
         }
 
-        stage('SonarQube Analysis') {
+        stage('SonarCloud Analysis') {
             steps {
                 script {
-                    gv.sonarqubeAnalysis()
+                    gv.sonarcloudAnalysis()
                 }
             }
         }
@@ -135,7 +137,7 @@ pipeline {
                 }
             }
         }
-        /*
+
         stage('Upload Trivy Report to S3') {
             steps {
                 script {
@@ -143,7 +145,7 @@ pipeline {
                 }
             }
         }
-        */
+        
         stage('Push Docker Image') {
             when { expression { trivyPassed() } }
             steps {
@@ -174,7 +176,6 @@ pipeline {
         }
     }
 
-    /*
     post {
         success {
             script {
@@ -241,5 +242,4 @@ pipeline {
             )
         }
     }
-    */
 }
