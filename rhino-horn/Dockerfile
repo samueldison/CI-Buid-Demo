@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-ARG BUILDER_IMAGE=bellsoft/liberica-openjdk-alpine:17.0.12
-ARG RUNTIME_IMAGE=bellsoft/liberica-openjdk-alpine:17.0.12
+ARG BUILDER_IMAGE=bellsoft/liberica-openjdk-alpine:17.0.20.1
+ARG RUNTIME_IMAGE=bellsoft/liberica-openjdk-alpine:17.0.20.1
 
 FROM ${BUILDER_IMAGE} AS builder
 WORKDIR /build
