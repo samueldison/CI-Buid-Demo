@@ -84,7 +84,7 @@ jobs:
           fetch-depth: 0
 
       - name: Cache SonarQube packages
-        uses: actions/cache@0v4.3.0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
@@ -99,7 +99,7 @@ jobs:
         run: ls -R
 
       - name: Sonarqube Scan
-        uses: SonarSource/sonarqube-scan-action@v8.3.0
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9
         with:
           args: >
             -Dsonar.organization=${{ secrets.SONAR_ORG }}
