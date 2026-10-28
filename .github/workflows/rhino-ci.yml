@@ -84,7 +84,7 @@ jobs:
           fetch-depth: 0
 
       - name: Cache SonarQube packages
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/cache@v6
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
