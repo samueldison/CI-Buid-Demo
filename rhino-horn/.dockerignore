@@ -1,4 +1,7 @@
-**
-#!rhino-horn/
-# !rhino-horn/target/
-#!rhino-horn/target/*.jar
+.git
+.gitignore
+.mvn
+.idea
+.vscode
+*.md
+.DS_Store
