@@ -1,4 +1,4 @@
 **
-!rhino-horn/
-!rhino-horn/target/
-!rhino-horn/target/*.jar
+#!rhino-horn/
+# !rhino-horn/target/
+#!rhino-horn/target/*.jar
