@@ -18,7 +18,9 @@ LABEL org.opencontainers.image.title="DevSecOps-api" \
       org.opencontainers.image.version="${APP_VERSION}"
 
 WORKDIR /app
-RUN addgroup -S spring && adduser -S spring -G spring
+# Pull Alpine security fixes released after the base image was built
+RUN apk upgrade --no-cache && \
+    addgroup -S spring && adduser -S spring -G spring
 
 COPY --chown=spring:spring --from=builder /build/dependencies/ ./
 COPY --chown=spring:spring --from=builder /build/spring-boot-loader/ ./
