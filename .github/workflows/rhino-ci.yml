@@ -153,13 +153,13 @@ jobs:
         run: |
           curl -fsSL -o html.tpl \
             https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl  
-                
+
       - name: Trivy scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: colanta06/rhino-horn:${{ steps.vars.outputs.SHORT_SHA }}
           format: template
-          template: '@/contrib/html.tpl'
+          template: '@html.tpl'
           output: trivy-report-${{ steps.vars.outputs.SHORT_SHA }}.html
           exit-code: '1'
           severity: HIGH,CRITICAL
