@@ -148,8 +148,12 @@ jobs:
             APP_VERSION=${{ steps.vars.outputs.SHORT_SHA }}
           tags: |
             colanta06/rhino-horn:${{ steps.vars.outputs.SHORT_SHA }}
-            colanta06/rhino-horn:latest
 
+      - name: Fetch Trivy HTML template
+        run: |
+          curl -fsSL -o html.tpl \
+            https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl  
+                
       - name: Trivy scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
