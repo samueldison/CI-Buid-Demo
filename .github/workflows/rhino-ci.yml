@@ -13,26 +13,26 @@ jobs:
   gitleaks_scan:
     runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@v6
-      with:
-        fetch-depth: 0 
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-    - name: Run Gitleaks Scan
-      uses: gitleaks/gitleaks-action@v3
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        detect: true
-        source: ./rhino-horn
-        report-path: rhino-horn/gitleaks-report.json
-        exit-code: 1
+      - name: Run Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          detect: true
+          source: ./rhino-horn
+          report-path: rhino-horn/gitleaks-report.html
+          exit-code: 1
 
-    - name: Upload Gitleaks Report
-      if: always() # Upload even if secrets are found
-      uses: actions/upload-artifact@v7
-      with:
-        name: gitleaks-report
-        path: rhino-horn/gitleaks-report.json
+      - name: Upload Gitleaks Report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gitleaks-report
+          path: rhino-horn/gitleaks-report.html
 
   dockerfile_security_check:
     needs: gitleaks_scan
@@ -54,29 +54,29 @@ jobs:
       fail-fast: true
       max-parallel: 2
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
+        os: [ubuntu-24.04, ubuntu-26.04]
         java: [17]
 
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
-    - name: Set up java
-      uses: actions/setup-java@v5
-      with:
-        distribution: 'temurin'
-        java-version: ${{ matrix.java }}
-        cache: 'maven'
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
 
-    - name: Build with Maven
-      run: |
-       mvn -B package --file rhino-horn/pom.xml
+      - name: Build with Maven
+        run: mvn -B package --file rhino-horn/pom.xml
 
-    - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v7
-      with:
-        name: rhino-horn
-        path: rhino-horn/target/
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rhino-horn-${{ matrix.os }}-java-${{ matrix.java }}
+          path: rhino-horn/target/*.jar
+          if-no-files-found: error
 
   sonar_cloud_scan:
     needs: maven_build
@@ -93,13 +93,14 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
-      - uses: actions/download-artifact@v8
+      - name: Download build artifact
+        uses: actions/download-artifact@v8
         with:
-          name: rhino-horn
-          path: rhino-horn/target/
+          name: rhino-horn-ubuntu-26.04-java-17
+          path: rhino-horn/target
 
       - name: Display structure of downloaded files
-        run: ls -R
+        run: ls -R rhino-horn/target
 
       - name: Sonarqube Scan
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9
@@ -109,19 +110,17 @@ jobs:
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
             -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }}
             -Dsonar.token=${{ secrets.SONAR_TOKEN }}
-            -Dsonar.java.binaries=target/
             -Dsonar.verbose=false
 
   docker_build_scan_and_push:
     needs: sonar_cloud_scan
     runs-on: ubuntu-26.04
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
       - name: Set short SHA
         id: vars
-        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v4
@@ -129,19 +128,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Download build artifact
         uses: actions/download-artifact@v8
         with:
-          name: rhino-horn
-          path: rhino-horn/target/
+          name: rhino-horn-ubuntu-26.04-java-17
+          path: rhino-horn/target
 
-      - name: Build Docker image for analysis
+      - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: ./rhino-horn
@@ -149,22 +145,21 @@ jobs:
           push: false
           load: true
           build-args: |
-              APP_VERSION=${{ steps.vars.outputs.SHORT_SHA }}
+            APP_VERSION=${{ steps.vars.outputs.SHORT_SHA }}
           tags: |
-              colanta06/rhino-horn:${{ steps.vars.outputs.SHORT_SHA }}
-              colanta06/rhino-horn:latest
+            colanta06/rhino-horn:${{ steps.vars.outputs.SHORT_SHA }}
+            colanta06/rhino-horn:latest
 
-      - name: Run Trivy vulnerability scanner 
-        uses: aquasecurity/trivy-action@0.36.0
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: colanta06/rhino-horn:${{ steps.vars.outputs.SHORT_SHA }}
-          format: html
+          format: template
+          template: '@/contrib/html.tpl'
           output: trivy-report-${{ steps.vars.outputs.SHORT_SHA }}.html
-          exit-code: 1
+          exit-code: '1'
           severity: HIGH,CRITICAL
-              --vuln-type 'os,library'\
-              --ignore-unfixed \
-              colanta06/rhino-horn:${{ steps.vars.outputs.SHORT_SHA }}
+          ignore-unfixed: true
 
       - name: Upload Trivy report
         if: always()
@@ -173,15 +168,10 @@ jobs:
           name: trivy-report
           path: trivy-report-${{ steps.vars.outputs.SHORT_SHA }}.html
 
-      - name: Push Docker image (if scan passed)
-        uses: docker/build-push-action@v6
-        with:
-          context: ./rhino-horn
-          file: rhino-horn/Dockerfile
-          push: true
-          build-args: |
-              APP_VERSION=${{ steps.vars.outputs.SHORT_SHA }}
-          tags: colanta06/rhino-horn:${{ steps.vars.outputs.SHORT_SHA }}
+      - name: Push scanned image
+        run: |
+          docker push colanta06/rhino-horn:${{ steps.vars.outputs.SHORT_SHA }}
+          docker push colanta06/rhino-horn:latest
 
   upload_trivy_report_to_s3:
     needs: docker_build_scan_and_push
