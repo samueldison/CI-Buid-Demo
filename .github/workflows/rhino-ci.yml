@@ -175,7 +175,6 @@ jobs:
       - name: Push scanned image
         run: |
           docker push colanta06/rhino-horn:${{ steps.vars.outputs.SHORT_SHA }}
-          docker push colanta06/rhino-horn:latest
 
   upload_trivy_report_to_s3:
     needs: docker_build_scan_and_push
