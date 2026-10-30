@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-ARG BUILDER_IMAGE=bellsoft/liberica-openjdk-alpine:17.0.12
-ARG RUNTIME_IMAGE=bellsoft/liberica-openjdk-alpine:17.0.12
+ARG BUILDER_IMAGE=bellsoft/liberica-openjdk-alpine:17.0.20.1
+ARG RUNTIME_IMAGE=bellsoft/liberica-openjdk-alpine:17.0.20.1
 
 FROM ${BUILDER_IMAGE} AS builder
 WORKDIR /build
@@ -18,7 +18,9 @@ LABEL org.opencontainers.image.title="DevSecOps-api" \
       org.opencontainers.image.version="${APP_VERSION}"
 
 WORKDIR /app
-RUN addgroup -S spring && adduser -S spring -G spring
+# Pull Alpine security fixes released after the base image was built
+RUN apk upgrade --no-cache && \
+    addgroup -S spring && adduser -S spring -G spring
 
 COPY --chown=spring:spring --from=builder /build/dependencies/ ./
 COPY --chown=spring:spring --from=builder /build/spring-boot-loader/ ./
