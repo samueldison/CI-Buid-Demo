@@ -1,0 +1,5 @@
+# Only fixed in Spring Framework 7.0.9 (Spring Boot 4); no 6.2.x OSS fix yet. Revisit by the exp date.
+# Remote Code Execution via XsltView path handling - app renders Thymeleaf views only, no XsltView.
+CVE-2026-47884 exp:2027-01-31
+# SSE stream corruption with view rendering - app exposes no Server-Sent Events endpoints.
+CVE-2026-47890 exp:2027-01-31
