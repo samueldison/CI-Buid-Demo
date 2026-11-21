@@ -1,0 +1,10 @@
+apiVersion: kro.run/v1alpha1
+kind: ApplicationEnvironment
+metadata:
+  name: dev-env
+spec:
+  targetNamespace: dev
+
+  environment: dev
+  team: developers
+  costCenter: dev-cost-center

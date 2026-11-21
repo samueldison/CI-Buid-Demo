@@ -1,0 +1,320 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: application-environment
+  annotations:
+    description: "Secure application environment providing namespace governance, resource controls, Pod Security Standards, and a default-deny network baseline."
+    # Not recommended in production, use solely for development purposes. 
+    kro.run/allow-breaking-changes: "true"
+
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: ApplicationEnvironment # NameSpaceConfig
+    scope: Cluster
+
+    spec:
+      # =====================
+      # Environment Metadata
+      # =====================
+      targetNamespace: string | required=true
+      environment: string | default=""
+      team: string | default=""
+      costCenter: string | default=""
+      cloudProvider: string | default=""
+
+      # ============================
+      # Service Mesh - Istio Ambient
+      # ============================
+      # ambientMesh: boolean | default=true
+      
+      # =================
+      # Resource Quotas
+      # =================
+      resourceQuota:
+        enabled: boolean | default=true
+        requestsCpu: string | default="2"
+        requestsMemory: string | default="4Gi"
+        limitsCpu: string | default="6"
+        limitsMemory: string | default="8Gi"
+        pods: integer | default=20
+        services: integer | default=10
+        configMaps: integer | default=20
+        secrets: integer | default=20
+        serviceAccounts: integer | default=5
+        persistentVolumeClaims: integer | default=10
+        ingresses: integer | default=5
+        deployments: integer | default=10
+        jobs: integer | default=20
+        cronJobs: integer | default=5
+        storageRequests: string | default="100Gi"
+        gp3StorageRequests: string | default="50Gi"
+
+      # ========================
+      # Resource Limits
+      # ========================
+      limitRange:
+        enabled: boolean | default=true
+        cpuRequest: string | default="100m"
+        cpuLimit: string | default="500m"
+        memoryRequest: string | default="128Mi"
+        memoryLimit: string | default="1Gi"
+        podMaxCpu: string | default="2"
+        podMaxMemory: string | default="4Gi"
+        pvcMinStorage: string | default="1Gi"
+        pvcMaxStorage: string | default="50Gi"
+
+      # ============================
+      # Network Security Baseline
+      # ============================
+      #
+      # Security model:
+      #
+      #   Ingress = DENY by default
+      #   Egress  = DENY by default
+      #   DNS     = explicitly allowed
+      #
+      # Application-specific communication rules MUST
+      # be created by the WebApplication RGD.
+      networkPolicy:
+        enabled: boolean | default=true
+
+      # ========================
+      # Pod Security Standards
+      # ========================
+      podSecurity:
+        enforce: string | default="restricted" # Enforce restricted PSS for this namespace
+        audit: string | default="baseline"     # Audit baseline PSS for this namespace
+        warn: string | default="baseline"      # Warn baseline PSS for this namespace
+
+  resources:
+
+    # =====================
+    # Namespace
+    # =====================
+    - id: appnamespace
+      template:
+        apiVersion: v1
+        kind: Namespace
+
+        metadata:
+          name: ${schema.spec.targetNamespace}
+
+          labels:
+            app.kubernetes.io/name: ${schema.spec.targetNamespace}
+            app.kubernetes.io/component: environment
+            app.kubernetes.io/managed-by: kro
+            # istio.io/dataplane-mode: ${schema.spec.ambientMesh ? "ambient" : null}
+
+            environment: ${schema.spec.environment}
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+
+            # Pod Security Standards
+            pod-security.kubernetes.io/enforce: ${schema.spec.podSecurity.enforce} # Rejects pods that violate the specified standard.
+            pod-security.kubernetes.io/audit: ${schema.spec.podSecurity.audit} # Allows violating pods to run, but logs an event in the audit logs.
+            pod-security.kubernetes.io/warn: ${schema.spec.podSecurity.warn} # Allows violating pods to run, but sends a user-facing warning during creation.
+
+    # ==================================
+    # ResourceQuota
+    # ==================================
+    - id: quota
+      includeWhen:
+        - ${schema.spec.resourceQuota.enabled}
+
+      template:
+        apiVersion: v1
+        kind: ResourceQuota
+
+        metadata:
+          name: ${schema.spec.targetNamespace}-quota
+          namespace: ${appnamespace.metadata.name}
+
+          labels:
+            app.kubernetes.io/name: ${schema.spec.targetNamespace}
+            app.kubernetes.io/component: environment
+            app.kubernetes.io/managed-by: kro
+
+        spec:
+          hard:
+            requests.cpu: ${schema.spec.resourceQuota.requestsCpu}
+            requests.memory: ${schema.spec.resourceQuota.requestsMemory}
+            limits.cpu: ${schema.spec.resourceQuota.limitsCpu}
+            limits.memory: ${schema.spec.resourceQuota.limitsMemory}
+            pods: ${schema.spec.resourceQuota.pods}
+            services: ${schema.spec.resourceQuota.services}
+            configmaps: ${schema.spec.resourceQuota.configMaps}
+            secrets: ${schema.spec.resourceQuota.secrets}
+            count/serviceaccounts: ${schema.spec.resourceQuota.serviceAccounts}
+            persistentvolumeclaims: ${schema.spec.resourceQuota.persistentVolumeClaims}
+            count/ingresses.networking.k8s.io: ${schema.spec.resourceQuota.ingresses}
+            count/deployments.apps: ${schema.spec.resourceQuota.deployments}
+            count/jobs.batch: ${schema.spec.resourceQuota.jobs}
+            count/cronjobs.batch: ${schema.spec.resourceQuota.cronJobs}
+            requests.storage: ${schema.spec.resourceQuota.storageRequests}
+
+    # ==================================
+    # GP3 Storage Quota (AWS Only)
+    # ==================================
+    - id: gp3quota
+
+      includeWhen:
+        - ${schema.spec.cloudProvider == "aws"}
+
+      template:
+        apiVersion: v1
+        kind: ResourceQuota
+
+        metadata:
+          name: ${schema.spec.targetNamespace}-gp3-quota
+          namespace: ${appnamespace.metadata.name}
+
+          labels:
+            app.kubernetes.io/name: ${schema.spec.targetNamespace}
+            app.kubernetes.io/component: environment
+            app.kubernetes.io/managed-by: kro
+
+        spec:
+          hard:
+            gp3.storageclass.storage.k8s.io/requests.storage: ${schema.spec.resourceQuota.gp3StorageRequests}
+
+    # ==================================
+    # LimitRange
+    # ==================================
+    - id: limits
+      includeWhen:
+        - ${schema.spec.limitRange.enabled}
+      template:
+        apiVersion: v1
+        kind: LimitRange
+
+        metadata:
+          name: ${schema.spec.targetNamespace}-limits
+          namespace: ${appnamespace.metadata.name}
+
+          labels:
+            app.kubernetes.io/name: ${schema.spec.targetNamespace}
+            app.kubernetes.io/component: environment
+            app.kubernetes.io/managed-by: kro
+
+        spec:
+          limits:
+
+            - type: Container
+
+              default:
+                cpu: ${schema.spec.limitRange.cpuLimit}
+                memory: ${schema.spec.limitRange.memoryLimit}
+
+              defaultRequest:
+                cpu: ${schema.spec.limitRange.cpuRequest}
+                memory: ${schema.spec.limitRange.memoryRequest}
+
+
+            - type: Pod
+
+              max:
+                cpu: ${schema.spec.limitRange.podMaxCpu}
+                memory: ${schema.spec.limitRange.podMaxMemory}
+
+            - type: PersistentVolumeClaim
+
+              min:
+                storage: ${schema.spec.limitRange.pvcMinStorage}
+
+              max:
+                storage: ${schema.spec.limitRange.pvcMaxStorage}
+
+    # ============================================
+    # NETWORK SECURITY BASELINE
+    #
+    # Default deny:
+    #
+    #   Ingress -> DENY
+    #   Egress  -> DENY
+    #
+    # No application communication is permitted
+    # unless another RGD explicitly creates a policy.
+    # ============================================
+    - id: defaultdeny
+
+      includeWhen:
+        - ${schema.spec.networkPolicy.enabled}
+
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+
+        metadata:
+          name: default-deny
+          namespace: ${appnamespace.metadata.name}
+
+          labels:
+            app.kubernetes.io/name: ${schema.spec.targetNamespace}
+            app.kubernetes.io/component: environment
+            security.kubernetes.io/policy: default-deny
+            app.kubernetes.io/managed-by: kro
+
+        spec:
+
+          # Select every pod in the namespace.
+          podSelector: {}
+
+          policyTypes:
+            - Ingress
+            - Egress
+
+    # ============================================
+    # DNS EGRESS
+    #
+    # DNS is the ONLY network exception created
+    # by the environment baseline.
+    #
+    # Application-specific egress belongs to the
+    # WebApplication RGD.
+    # ============================================
+    - id: dnsegress
+
+      includeWhen:
+        - ${schema.spec.networkPolicy.enabled}
+
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+
+        metadata:
+          name: allow-dns-egress
+          namespace: ${appnamespace.metadata.name}
+
+          labels:
+            app.kubernetes.io/name: ${schema.spec.targetNamespace}
+            app.kubernetes.io/component: environment
+            security.kubernetes.io/policy: required
+            app.kubernetes.io/managed-by: kro
+
+        spec:
+
+          podSelector: {}
+
+          policyTypes:
+            - Egress
+
+          egress:
+
+            - to:
+
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: kube-system
+
+                  podSelector:
+                    matchLabels:
+                      k8s-app: kube-dns
+
+              ports:
+
+                - protocol: UDP
+                  port: 53
+
+                - protocol: TCP
+                  port: 53

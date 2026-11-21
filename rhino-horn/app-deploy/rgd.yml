@@ -1,0 +1,556 @@
+# RGD for Web Applications 
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: web-application
+  annotations:
+    description: "Web application platform abstraction"
+    kro.run/allow-breaking-changes: "true" # NOTE! Solely for development purpose. Avoid breaking changes in production.
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: WebApplication
+    scope: Namespaced
+
+    spec:
+      targetNamespace: string | required=true
+
+      #=== Metadata ===
+      team: string | default=""
+      costCenter: string | default=""
+      environment: string | default=""
+
+      name: string | required=true
+      image: string | required=true
+      imagePullPolicy: string | default=IfNotPresent
+      imagePullSecrets: "[]string"
+      replicas: integer | default=1
+
+      # ===========
+      # Networking
+      # ===========
+      containerPort: integer | required=true
+      port: integer | required=true # service port
+      httpPortName: string | default="http"
+      metricsPortName: string | default="metrics"
+      serviceType: string | default="ClusterIP"
+
+      ingress:
+        enabled: boolean | default=false
+        host: string | default=""
+        path: string | default="/"
+        pathType: string | default="Prefix"
+        className: string | default="alb" enum="alb,nginx"
+        certificateArn: string | default="" # required when className=alb
+        tlsSecretName: string | default="" # used only when className=nginx
+
+      # =============
+      # Health Probes
+      # =============
+      health:
+        startupPath: string | default="/health"
+        readyPath: string | default="/health/ready"
+        livePath: string | default="/health/live"
+
+      probes:
+        enabled: boolean | default=true
+        startup:
+          initialDelaySeconds: integer | default=10
+          periodSeconds: integer | default=5
+          failureThreshold: integer | default=30
+          timeoutSeconds: integer | default=3
+        readiness:
+          initialDelaySeconds: integer | default=5
+          periodSeconds: integer | default=5
+          failureThreshold: integer | default=3
+          timeoutSeconds: integer | default=2
+        liveness:
+          initialDelaySeconds: integer | default=15
+          periodSeconds: integer | default=10
+          failureThreshold: integer | default=3
+          timeoutSeconds: integer | default=2
+
+      # ==========
+      # Resources
+      # ==========
+      resources:
+        requests:
+          cpu: string | default="250m"
+          memory: string | default="256Mi"
+        limits:
+          cpu: string | default="500m"
+          memory: string | default="512Mi"
+
+      # ==========
+      # PDB & HPA
+      # ==========
+      pdb:
+        enabled: boolean | default=false
+        minAvailable: integer | default=1
+
+      hpa:
+        enabled: boolean | default=false
+        minReplicas: integer | default=2
+        maxReplicas: integer | default=5
+        targetCPUUtilization: integer | default=70
+        targetMemoryUtilization: integer | default=80
+
+      # ===========
+      # Prometheus
+      # ===========
+      prometheus:
+        enabled: boolean | default=true
+        releaseLabel: string | default="prometheus-stack"
+        path: string | default="/metrics"
+        port: integer | default=8000                    # ← numeric port (container + Service)
+        scheme: string | default="http"
+        serviceMonitor: boolean | default=true
+        serviceMonitorNamespace: string | default=""
+        interval: string | default="15s"
+        scrapeTimeout: string | default="10s"
+
+      # ===============
+      # Network Policy
+      # ===============
+      networkPolicy:
+        enabled: boolean | default=true
+        prometheusNamespace: string | default="monitoring"
+        prometheusPodSelector: map[string]string
+        # Additive ingress rules on top of the environment default-deny.
+        # Each entry: { name: <pod-label-app-name>, port: <int> }
+        allowedIngressFrom: "[]object"
+        # Additive egress rules. Each entry: { name: <pod-label-app-name>, port: <int> }
+        allowedEgressTo: "[]object"
+
+      # ======================
+      # Environment Variables
+      # ======================
+      env:
+      # User must create ExternalSecret with same name before applying WebApplication RGD
+        plain: map[string]string
+        fromSecrets: "[]string" # names of the external secrets to mount (created by external-secrets operator/hashicorp vault/csi-secrets)
+
+  resources:
+    # 1. ServiceAccount
+    - id: serviceaccount
+      template:
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${schema.spec.targetNamespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: web
+            app.kubernetes.io/managed-by: kro
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+            environment: ${schema.spec.environment}
+        automountServiceAccountToken: false
+        imagePullSecrets: |-
+          ${has(schema.spec.imagePullSecrets) && size(schema.spec.imagePullSecrets) > 0
+            ? schema.spec.imagePullSecrets.map(s, {"name": s})
+            : []}
+
+    # 2. ConfigMap
+    - id: envconfig
+      includeWhen:
+        - ${has(schema.spec.env) && has(schema.spec.env.plain) && size(schema.spec.env.plain) > 0}
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.spec.name}-env
+          namespace: ${schema.spec.targetNamespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: web
+            app.kubernetes.io/managed-by: kro
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+            environment: ${schema.spec.environment}
+        data: ${schema.spec.env.plain}
+
+    # 3. Deployment
+    - id: deployment
+      readyWhen:
+        - ${deployment.status.observedGeneration == deployment.metadata.generation}
+        - ${deployment.status.availableReplicas >= 1}
+        - ${deployment.status.updatedReplicas == deployment.spec.replicas}
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${schema.spec.targetNamespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: web
+            app.kubernetes.io/managed-by: kro
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+            environment: ${schema.spec.environment}
+        spec:
+          replicas: "${schema.spec.hpa.enabled ? schema.spec.hpa.minReplicas : schema.spec.replicas}"
+          strategy:
+            type: RollingUpdate
+            rollingUpdate:
+              maxUnavailable: 25%
+              maxSurge: 25%
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: ${schema.spec.name}
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: ${schema.spec.name}
+                app.kubernetes.io/component: web
+                app.kubernetes.io/managed-by: kro
+                team: ${schema.spec.team}
+                cost-center: ${schema.spec.costCenter}
+                environment: ${schema.spec.environment}
+            spec:
+              serviceAccountName: ${serviceaccount.metadata.name}
+              automountServiceAccountToken: false
+              imagePullSecrets: |-
+                ${has(schema.spec.imagePullSecrets) && size(schema.spec.imagePullSecrets) > 0
+                  ? schema.spec.imagePullSecrets.map(s, {"name": s})
+                  : []}
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                runAsGroup: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              topologySpreadConstraints:
+                - maxSkew: 1
+                  topologyKey: kubernetes.io/hostname
+                  whenUnsatisfiable: ScheduleAnyway
+                  labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: ${schema.spec.name}
+              affinity:
+                podAntiAffinity:
+                  preferredDuringSchedulingIgnoredDuringExecution:
+                    - weight: 100
+                      podAffinityTerm:
+                        topologyKey: kubernetes.io/hostname
+                        labelSelector:
+                          matchLabels:
+                            app.kubernetes.io/name: ${schema.spec.name}
+              volumes:
+                - name: tmp
+                  emptyDir: {}
+              containers:
+                - name: app
+                  image: ${schema.spec.image}
+                  imagePullPolicy: ${schema.spec.imagePullPolicy}
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    readOnlyRootFilesystem: true
+                    capabilities:
+                      drop: ["ALL"]
+                  volumeMounts:
+                    - name: tmp
+                      mountPath: /tmp
+                  ports: |-
+                    ${schema.spec.prometheus.port != schema.spec.containerPort
+                      ? [
+                          {"name": schema.spec.httpPortName, "containerPort": schema.spec.containerPort},
+                          {"name": schema.spec.metricsPortName, "containerPort": schema.spec.prometheus.port}
+                        ]
+                      : [
+                          {"name": schema.spec.httpPortName, "containerPort": schema.spec.containerPort}
+                        ]
+                    }
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.resources.requests.cpu}
+                      memory: ${schema.spec.resources.requests.memory}
+                    limits:
+                      cpu: ${schema.spec.resources.limits.cpu}
+                      memory: ${schema.spec.resources.limits.memory}
+                  envFrom: |-
+                    ${(has(schema.spec.env) && has(schema.spec.env.plain) && size(schema.spec.env.plain) > 0
+                        ? [{"prefix": "", "configMapRef": {"name": schema.spec.name + "-env"}}]
+                        : [])
+                      +
+                    (has(schema.spec.env) && has(schema.spec.env.fromSecrets) && size(schema.spec.env.fromSecrets) > 0
+                        ? schema.spec.env.fromSecrets.map(s, {"prefix": "", "secretRef": {"name": s}})
+                        : [])}
+                  startupProbe: |-
+                    ${schema.spec.probes.enabled ? {
+                      "httpGet": {
+                        "path": schema.spec.health.startupPath,
+                        "port": schema.spec.httpPortName
+                      },
+                      "initialDelaySeconds": schema.spec.probes.startup.initialDelaySeconds,
+                      "periodSeconds": schema.spec.probes.startup.periodSeconds,
+                      "failureThreshold": schema.spec.probes.startup.failureThreshold,
+                      "timeoutSeconds": schema.spec.probes.startup.timeoutSeconds
+                    } : {}}
+                  readinessProbe: |-
+                    ${schema.spec.probes.enabled ? {
+                      "httpGet": {
+                        "path": schema.spec.health.readyPath,
+                        "port": schema.spec.httpPortName
+                      },
+                      "initialDelaySeconds": schema.spec.probes.readiness.initialDelaySeconds,
+                      "periodSeconds": schema.spec.probes.readiness.periodSeconds,
+                      "failureThreshold": schema.spec.probes.readiness.failureThreshold,
+                      "timeoutSeconds": schema.spec.probes.readiness.timeoutSeconds
+                    } : {}}
+                  livenessProbe: |-
+                    ${schema.spec.probes.enabled ? {
+                      "httpGet": {
+                        "path": schema.spec.health.livePath,
+                        "port": schema.spec.httpPortName
+                      },
+                      "initialDelaySeconds": schema.spec.probes.liveness.initialDelaySeconds,
+                      "periodSeconds": schema.spec.probes.liveness.periodSeconds,
+                      "failureThreshold": schema.spec.probes.liveness.failureThreshold,
+                      "timeoutSeconds": schema.spec.probes.liveness.timeoutSeconds
+                    } : {}}
+
+    # 4. Service
+    - id: service
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${schema.spec.targetNamespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: web
+            app.kubernetes.io/managed-by: kro
+
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+            environment: ${schema.spec.environment}
+        spec:
+          type: ${schema.spec.serviceType}
+          selector:
+            app.kubernetes.io/name: ${schema.spec.name}
+          ports: |-
+            ${schema.spec.prometheus.port != schema.spec.port
+              ? [
+                  {"name": schema.spec.httpPortName, "port": schema.spec.port, "targetPort": schema.spec.httpPortName},
+                  {"name": schema.spec.metricsPortName, "port": schema.spec.prometheus.port, "targetPort": schema.spec.metricsPortName}
+                ]
+              : [
+                  {"name": schema.spec.httpPortName, "port": schema.spec.port, "targetPort": schema.spec.httpPortName}
+                ]
+            }
+
+    # 5. Ingress
+    - id: ingress
+      includeWhen:
+        - ${schema.spec.ingress.enabled}
+        - ${schema.spec.ingress.host != ""}
+        # ALB requires a certificate ARN; gate creation so we don't produce a
+        # half-broken Ingress that the AWS Load Balancer Controller will reject.
+        - ${schema.spec.ingress.className != "alb" || schema.spec.ingress.certificateArn != ""}
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: ${schema.spec.name}-ingress
+          namespace: ${schema.spec.targetNamespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: web
+            app.kubernetes.io/managed-by: kro
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+            environment: ${schema.spec.environment}
+          annotations: |-
+            ${
+              schema.spec.ingress.className == "alb" ? { 
+                "alb.ingress.kubernetes.io/scheme": "internet-facing",
+                "alb.ingress.kubernetes.io/target-type": "ip",
+                "alb.ingress.kubernetes.io/healthcheck-path": schema.spec.health.readyPath,
+                "alb.ingress.kubernetes.io/listen-ports": "[{\"HTTPS\": 443}]",
+                "alb.ingress.kubernetes.io/certificate-arn": schema.spec.ingress.certificateArn
+              } :
+              schema.spec.ingress.className == "nginx" ? {
+                "nginx.ingress.kubernetes.io/ssl-redirect": "true",
+                "nginx.ingress.kubernetes.io/force-ssl-redirect": "true",
+                "nginx.ingress.kubernetes.io/proxy-body-size": "50m"
+              } : {}
+            }
+        spec:
+          ingressClassName: ${schema.spec.ingress.className}
+          tls: |-
+            ${
+              schema.spec.ingress.className == "nginx" && schema.spec.ingress.tlsSecretName != "" ? [{
+                "hosts": [schema.spec.ingress.host],
+                "secretName": schema.spec.ingress.tlsSecretName
+              }] : []
+            }
+          rules:
+            - host: ${schema.spec.ingress.host}
+              http:
+                paths:
+                  - path: ${schema.spec.ingress.path}
+                    pathType: ${schema.spec.ingress.pathType}
+                    backend:
+                      service:
+                        name: ${service.metadata.name}
+                        port:
+                          number: ${schema.spec.port}
+
+    # 6. PodDisruptionBudget
+    - id: pdb
+      includeWhen:
+        - ${schema.spec.pdb.enabled}
+      template:
+        apiVersion: policy/v1
+        kind: PodDisruptionBudget
+        metadata:
+          name: ${schema.spec.name}-pdb
+          namespace: ${schema.spec.targetNamespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: web
+            app.kubernetes.io/managed-by: kro
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+            environment: ${schema.spec.environment}
+        spec:
+          minAvailable: ${schema.spec.pdb.minAvailable}
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: ${schema.spec.name}
+
+    # 7. HorizontalPodAutoscaler
+    - id: hpa
+      includeWhen:
+        - ${schema.spec.hpa.enabled}
+      template:
+        apiVersion: autoscaling/v2
+        kind: HorizontalPodAutoscaler
+        metadata:
+          name: ${schema.spec.name}-hpa
+          namespace: ${schema.spec.targetNamespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: web
+            app.kubernetes.io/managed-by: kro
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+            environment: ${schema.spec.environment}
+        spec:
+          scaleTargetRef:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: ${schema.spec.name}
+          minReplicas: ${schema.spec.hpa.minReplicas}
+          maxReplicas: ${schema.spec.hpa.maxReplicas}
+          metrics:
+          # CPU Based Metric
+            - type: Resource
+              resource:
+                name: cpu
+                target:
+                  type: Utilization
+                  averageUtilization: ${schema.spec.hpa.targetCPUUtilization}
+          # Memory Based Metric
+            - type: Resource
+              resource:
+                name: memory
+                target:
+                  type: Utilization
+                  averageUtilization: ${schema.spec.hpa.targetMemoryUtilization}        
+
+
+
+    # 8. ServiceMonitor
+    - id: servicemonitor
+      includeWhen:
+        - ${schema.spec.prometheus.enabled}
+        - ${schema.spec.prometheus.serviceMonitor}
+      template:
+        apiVersion: monitoring.coreos.com/v1
+        kind: ServiceMonitor
+        metadata:
+          name: ${schema.spec.name}-monitor
+          namespace: '${schema.spec.prometheus.serviceMonitorNamespace != "" ? schema.spec.prometheus.serviceMonitorNamespace : schema.spec.targetNamespace}'
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: web
+            app.kubernetes.io/managed-by: kro
+            
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+            environment: ${schema.spec.environment}
+            release: ${schema.spec.prometheus.releaseLabel}
+        spec:
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: ${schema.spec.name}
+          endpoints:
+            - port: '${schema.spec.prometheus.port == schema.spec.port ? schema.spec.httpPortName : schema.spec.metricsPortName}'
+              path: ${schema.spec.prometheus.path}
+              interval: ${schema.spec.prometheus.interval}
+              scrapeTimeout: ${schema.spec.prometheus.scrapeTimeout}
+              scheme: ${schema.spec.prometheus.scheme}
+
+    # 9. NetworkPolicy
+    #
+    # Additive on top of the environment default-deny.
+    # Builds ingress/egress rules dynamically from allowedIngressFrom / allowedEgressTo.
+    - id: networkpolicy
+      includeWhen:
+        - ${schema.spec.networkPolicy.enabled}
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: ${schema.spec.name}-netpol
+          namespace: ${schema.spec.targetNamespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: web
+            app.kubernetes.io/managed-by: kro
+            
+            team: ${schema.spec.team}
+            cost-center: ${schema.spec.costCenter}
+            environment: ${schema.spec.environment}
+        spec:
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ${schema.spec.name}
+          policyTypes:
+            - Ingress
+            - Egress
+          ingress: |-
+            ${
+              (schema.spec.prometheus.enabled ? [{
+                "from": [{
+                  "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": schema.spec.networkPolicy.prometheusNamespace}},
+                  "podSelector": {"matchLabels":
+                    has(schema.spec.networkPolicy.prometheusPodSelector) && size(schema.spec.networkPolicy.prometheusPodSelector) > 0
+                      ? schema.spec.networkPolicy.prometheusPodSelector
+                      : {"app.kubernetes.io/name": "prometheus"}
+                  }
+                }],
+                "ports": [{"port": schema.spec.prometheus.port, "protocol": "TCP"}]
+              }] : [])
+              +
+              (has(schema.spec.networkPolicy.allowedIngressFrom) && size(schema.spec.networkPolicy.allowedIngressFrom) > 0
+                ? schema.spec.networkPolicy.allowedIngressFrom.map(peer, {
+                    "from": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": peer.name}}}],
+                    "ports": [{"port": peer.port, "protocol": "TCP"}]
+                  })
+                : [])
+            }
+          egress: |-
+            ${
+              has(schema.spec.networkPolicy.allowedEgressTo) && size(schema.spec.networkPolicy.allowedEgressTo) > 0
+                ? schema.spec.networkPolicy.allowedEgressTo.map(peer, {
+                    "to": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": peer.name}}}],
+                    "ports": [{"port": peer.port, "protocol": "TCP"}]
+                  })
+                : []
+            }

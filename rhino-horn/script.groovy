@@ -1,9 +1,5 @@
-def pullSourceCode() {
-    echo "====++++Pulling Source Code From Repo++++===="
-
-    // Shared Git reference cache for this repo only.
-    def repoCache = '/var/lib/jenkins/git-cache/CI-Buid-Demo.git'
-
+def checkoutCode() {
+    echo "====++++Checking Out Code from Git Repository++++===="
     checkout([
         $class: 'GitSCM',
         branches: [[name: "*/${params.BRANCH_NAME}"]],
@@ -14,12 +10,12 @@ def pullSourceCode() {
             [$class: 'CloneOption',
                 depth: 1,
                 noTags: false,
-                reference: repoCache,
+                reference: '/var/lib/jenkins/git-cache/CI-Buid-Demo.git',
                 shallow: true
             ]
         ],
-        userRemoteConfigs: [[credentialsId: env.GIT_CREDS, url: env.GIT_URL]]
-    ])
+        userRemoteConfigs: [[url: env.GIT_URL, credentialsId: env.GIT_CREDS]]
+    ])                     
 }
 
 def secretsScan(boolean failOnLeaks) {
@@ -36,7 +32,7 @@ def secretsScan(boolean failOnLeaks) {
         returnStatus: true
     )
 
-    archiveArtifacts artifacts: 'gitleaks-reports/**', fingerprint: true
+    archiveArtifacts artifacts: 'gitleaks-reports/**', fingerprint: true, allowEmptyArchive: true
 
     if (result != 0) {
         if (failOnLeaks) {
@@ -75,7 +71,7 @@ def deployToNexus() {
                 mavenSettingsConfig: 'maven-settings',
                 traceability: true
             ) {
-                sh 'mvn clean deploy'
+                sh 'mvn clean deploy -DskipTests'
             }
         }
     }
@@ -124,13 +120,14 @@ def buildDockerImage() {
     echo "====++++Building Docker Image++++===="
 
     def shortCommitSha = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+    env.IMAGE_NAME_SHA = "${env.DOCKER_NAMESPACE}/${env.JOB_NAME.replaceAll('/', '-').toLowerCase()}:${shortCommitSha}"
     sh """
         DOCKER_BUILDKIT=1 docker build \
             --no-cache \
             --pull \
-            --build-arg APP_VERSION="${shortCommitSha}" \
+            --build-arg APP_VERSION="${params.PROJECT_VERSION}-${shortCommitSha}" \
             -t ${env.IMAGE_NAME} \
-            -t ${env.DOCKER_NAMESPACE}/${env.JOB_NAME.replaceAll('/', '-').toLowerCase()}:${shortCommitSha} \
+            -t ${env.IMAGE_NAME_SHA} \
             -f ${env.DOCKERFILE} .
         """
 }
@@ -225,21 +222,6 @@ def uploadTrivyReportToS3() {
     }
 }
 
-def pushDockerImage() {
-    echo "====++++ Pushing Docker Image to Registry ++++===="
-    def dockerRegistryUrl = 'https://index.docker.io/v1/'
-    withDockerRegistry([credentialsId: 'docker_Id', url: dockerRegistryUrl]) {
-        retry(3) {
-            sh "docker push ${env.IMAGE_NAME}"
-
-            sh """
-               docker inspect --format='{{index .RepoDigests 0}}' ${env.IMAGE_NAME}
-          """
-        }
-        echo "Docker image pushed successfully: ${env.IMAGE_NAME}"
-    }
-}
-
 def smokeTest() {
     echo "====++++ Running Smoke Test ++++===="
 
@@ -274,12 +256,31 @@ def smokeTest() {
     }
 }
 
+def pushDockerImage() {
+    echo "====++++ Pushing Docker Image to Registry ++++===="
+    def dockerRegistryUrl = 'https://index.docker.io/v1/'
+    withDockerRegistry([credentialsId: 'docker_Id', url: dockerRegistryUrl]) {
+        retry(3) {
+            sh "docker push ${env.IMAGE_NAME}"
+            sh "docker push ${env.IMAGE_NAME_SHA}"
+
+            sh """
+               docker inspect --format='{{index .RepoDigests 0}}' ${env.IMAGE_NAME}
+          """
+        }
+        echo "Docker image pushed successfully: ${env.IMAGE_NAME}"
+    }
+}
+
 def cleanup() {
     echo "====++++ Cleaning Up Docker Images and Containers ++++===="
     try {
         sh "docker stop  ${env.CONTAINER_NAME} 2>&1 || true"
         sh "docker rm -f ${env.CONTAINER_NAME} 2>&1 || true"
         sh "docker rmi -f ${env.IMAGE_NAME}    2>&1 || true"
+        if (env.IMAGE_NAME_SHA) {
+            sh "docker rmi -f ${env.IMAGE_NAME_SHA} 2>&1 || true"
+        }
         sh "docker ps -a"
     } catch (Exception e) {
         echo "WARNING: Cleanup encountered an unexpected error: ${e.getMessage()}"

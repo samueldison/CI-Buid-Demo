@@ -1,0 +1,46 @@
+apiVersion: kro.run/v1alpha1
+kind: WebApplication
+metadata:
+  name: spring-api
+  namespace: dev
+spec:
+  targetNamespace: dev
+
+  name: spring-api
+  image: rhino-horn:0.0.1-SNAPSHOT
+  imagePullSecrets:
+    - dockerhub-cred
+  containerPort: 8084
+  port: 8084
+
+  team: dev-team
+  costCenter: cc-local
+  environment: dev
+
+  health:
+    startupPath: "/actuator/health"
+    readyPath: "/actuator/health"
+    livePath: "/actuator/health"
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  probes:
+    enabled: true
+
+  hpa:
+    enabled: true
+
+  prometheus:
+    enabled: true
+    port: 8084                     # metrics are served on the app port
+    path: /actuator/prometheus
+    releaseLabel: prometheus-stack
+    serviceMonitor: true
+
+# kubectl port-forward svc/spring-api 8084:8084 -n dev

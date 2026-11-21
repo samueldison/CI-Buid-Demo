@@ -19,8 +19,7 @@ pipeline {
         string(name: 'BUILD_NUM_TO_KEEP', defaultValue: '2', description: 'Number of builds to retain.')
         string(name: 'BUILD_DAYS_TO_KEEP', defaultValue: '7', description: 'Discard builds older than specified days.')
         string(name: 'BUILD_ARTIFACT_NUM_TO_KEEP', defaultValue: '2', description: 'Number of artifacts to retain')
-        string(name: 'BUILD_ARTIFACT_DAYS_TO_KEEP', defaultValue: '2',
-            description: 'Discard artifacts older than specified days.')
+        string(name: 'BUILD_ARTIFACT_DAYS_TO_KEEP', defaultValue: '2', description: 'Discard artifacts older than specified days.')
         string(name: 'CONTAINER_PORT', defaultValue: DEFAULT_PORT, description: 'Port to expose within the container.')
         choice(name: 'BRANCH_NAME', choices: ['main', DEV, STAGING], description: 'Git branch to build.')
         choice(name: 'MAIL_TO', choices: ['user1', 'user2'], description: 'Email recipient ID')
@@ -40,10 +39,8 @@ pipeline {
     GIT_CREDS          = 'gitcreds'
     DOCKERFILE         = 'rhino-horn/Dockerfile'
     DOCKER_NAMESPACE   = 'colanta06'
-    MAJOR_VERSION      = '1'
-    MINOR_VERSION      = '0'
-    PATCH_VERSION      = "${BUILD_NUMBER}" 
-    IMAGE_TAG          = "v${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
+    PATCH_VERSION      = "${BUILD_NUMBER}"
+    IMAGE_TAG          = "v${params.PROJECT_VERSION}.${PATCH_VERSION}"
     IMAGE_NAME         = "${DOCKER_NAMESPACE}/${JOB_NAME.replaceAll('/', '-').toLowerCase()}:${IMAGE_TAG.toLowerCase()}"
     CONTAINER_NAME     = "rhino-horn-${params.ENVIRONMENT}"
     SONAR_PROJECT_NAME = 'safari_rhino-horn'
@@ -51,7 +48,6 @@ pipeline {
     TRIVY_CACHE_DIR    = '/tmp/trivy'
     TRIVY_SCAN_STATUS  = '-1'
     S3_BUCKET_NAME    = "scan-reports-8mjmlco7hkfgbqbk" 
-
 }
 
 
@@ -59,20 +55,7 @@ pipeline {
         stage('init') {
             steps {
                 script {
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: "*/${params.BRANCH_NAME}"]],
-                        userRemoteConfigs: [[url: env.GIT_URL, credentialsId: env.GIT_CREDS]]
-                    ])
                     gv = load 'rhino-horn/script.groovy'
-                }
-            }
-        }
-
-        stage('Pull Src Code') {
-            steps {
-                script {
-                    gv.pullSourceCode()
                 }
             }
         }
@@ -146,15 +129,6 @@ pipeline {
             }
         }
         
-        stage('Push Docker Image') {
-            when { expression { trivyPassed() } }
-            steps {
-                script {
-                    gv.pushDockerImage()
-                }
-            }
-        }
-
         stage('Smoke Test') {
             when { expression { trivyPassed() } }
             steps {
@@ -164,21 +138,24 @@ pipeline {
             }
         }
 
-    }
-
-    post {
-        always {
-            script {
-                if (gv != null) {
-                    gv.cleanup()
+        stage('Push Docker Image') {
+            when { expression { trivyPassed() } }
+            steps {
+                script {
+                    gv.pushDockerImage()
                 }
             }
         }
+
     }
 
     post {
         success {
             script {
+                if (gv == null) {
+                    echo "Skipping success notifications: shared library not loaded."
+                    return
+                }
                 String reportUrl = "${env.BUILD_URL}artifact/trivy-reports/trivy-report.html"
 
                 build job: 'helm-chart-update',
@@ -211,6 +188,10 @@ pipeline {
 
         failure {
             script {
+                if (gv == null) {
+                    echo "Skipping failure notifications: shared library not loaded."
+                    return
+                }
                 String reportUrl = "${env.BUILD_URL}artifact/trivy-reports/trivy-report.html"
                 emailext(
                     to: gv.getEmailForUsers(params.MAIL_TO),
@@ -234,6 +215,11 @@ pipeline {
         }
        
         always {
+            script {
+                if (gv != null) {
+                    gv.cleanup()
+                }
+            }
             cleanWs(
                 cleanWhenNotBuilt: false,
                 deleteDirs: true,
