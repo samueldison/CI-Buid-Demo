@@ -4,3 +4,4 @@ CI-Buid-Demo/rhino-horn/target
 Runbook.md
 # Windows NTFS alternate data stream files (break actions/upload-artifact)
 *:Zone.Identifier
+.mcp.json
